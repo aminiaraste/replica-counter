@@ -1,0 +1,18 @@
+# Dev/test dependencies for the lambda/ test suite.
+# Pinned to specific versions for reproducible test runs.
+#
+# Run tests from the lambda/ directory with:
+#   pytest --cov=handler --cov-report=term-missing
+# (tests/conftest.py puts lambda/ on sys.path, so both `pytest` and
+# `python -m pytest` work from lambda/.)
+
+pytest==8.3.5
+pytest-cov==6.1.1
+moto==5.1.4
+
+# boto3 pin below is test-only, for reproducible moto behavior. It is
+# intentionally NOT a runtime dependency: handler.py runs on the AWS Lambda
+# Python runtime, which provides its own preinstalled boto3/botocore version
+# (see requirements.txt). Do not assume this pin matches what ships at
+# deploy time.
+boto3==1.37.34
