@@ -33,27 +33,27 @@ This plan implements the design in `design.md`: a CDK stack that provisions a VP
     - Add any missing branch coverage (e.g. the unexpected-value `ValueError` path) if the report shows gaps.
     - _Requirements: 7.2, 7.8_
 
-- [ ] 4. Implement CDK app skeleton (`infrastructure/`)
-  - [ ] 4.1 Write `infrastructure/cdk.json` and `infrastructure/requirements.txt`
+- [x] 4. Implement CDK app skeleton (`infrastructure/`)
+  - [x] 4.1 Write `infrastructure/cdk.json` and `infrastructure/requirements.txt`
     - `requirements.txt`: pin `aws-cdk-lib`, `constructs`, `aws-cdk.lambda-layer-kubectl-v31`. `aws_cdk.aws_s3_assets` is part of `aws-cdk-lib` in CDK v2 — no separate package needed.
     - _Requirements: none directly (supports all infra requirements)_
-  - [ ] 4.2 Write `infrastructure/app.py` instantiating the stack, passing through CDK context
+  - [x] 4.2 Write `infrastructure/app.py` instantiating the stack, passing through CDK context
     - _Requirements: 2.2, 2.3_
-  - [ ] 4.3 Vendor the `ingress-nginx` Helm chart into the repo
+  - [x] 4.3 Vendor the `ingress-nginx` Helm chart into the repo
     - One-time, manual setup step (not part of automated build/deploy; requires the `helm` CLI installed locally as a prerequisite): run `helm pull ingress-nginx --repo https://kubernetes.github.io/ingress-nginx --version 4.15.1 --untar`.
     - Commit the resulting extracted chart directory to `infrastructure/charts/ingress-nginx/`.
     - _Requirements: 6.1, 6.3_
 
-- [ ] 5. Implement VPC and EKS cluster in the stack
-  - [ ] 5.1 In `infrastructure/stacks/eks_stack.py`, create the VPC with `nat_gateways=1`
+- [x] 5. Implement VPC and EKS cluster in the stack
+  - [x] 5.1 In `infrastructure/stacks/eks_stack.py`, create the VPC with `nat_gateways=1`
     - _Requirements: 1.1_
-  - [ ] 5.2 Create the EKS cluster via `aws_cdk.aws_eks.Cluster` with `KubernetesVersion.V1_31`, `KubectlV31Layer`, `EndpointAccess.PUBLIC_AND_PRIVATE`, and the VPC from 5.1
+  - [x] 5.2 Create the EKS cluster via `aws_cdk.aws_eks.Cluster` with `KubernetesVersion.V1_31`, `KubectlV31Layer`, `EndpointAccess.PUBLIC_AND_PRIVATE`, and the VPC from 5.1
     - _Requirements: 1.2, 1.3_
-  - [ ] 5.3 Add the managed EC2 node group (`t3.medium`, min=1/max=1/desired=1) via `cluster.add_nodegroup_capacity`
+  - [x] 5.3 Add the managed EC2 node group (`t3.medium`, min=1/max=1/desired=1) via `cluster.add_nodegroup_capacity`
     - _Requirements: 1.4_
 
-- [ ] 6. Implement SSM parameter in the stack
-  - [ ] 6.1 Create the `StringParameter` `/platform/account/env`, sourcing its value from `scope.node.try_get_context("env")` defaulting to `"development"`
+- [x] 6. Implement SSM parameter in the stack
+  - [x] 6.1 Create the `StringParameter` `/platform/account/env`, sourcing its value from `scope.node.try_get_context("env")` defaulting to `"development"`
     - _Requirements: 2.1, 2.2, 2.3, 2.4_
 
 - [ ] 7. Implement Lambda function resource, IAM grant, and Provider/CustomResource wiring
