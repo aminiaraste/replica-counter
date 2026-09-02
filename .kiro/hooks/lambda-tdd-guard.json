@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Lambda TDD Guard",
+      "trigger": "PreToolUse",
+      "matcher": "fs_write|str_replace|fs_append",
+      "action": {
+        "type": "command",
+        "command": "python .kiro/hooks/tdd_guard.py"
+      },
+      "enabled": true
+    }
+  ]
+}
