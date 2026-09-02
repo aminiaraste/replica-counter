@@ -1,0 +1,16 @@
+# CDK application runtime dependencies for the infrastructure/ stack.
+#
+# aws-cdk-lib bundles all the service constructs this stack uses:
+#   aws_cdk.aws_ec2, aws_cdk.aws_eks, aws_cdk.aws_ssm, aws_cdk.aws_lambda,
+#   aws_cdk.custom_resources, aws_cdk.aws_s3_assets.
+# No separate per-service packages are required in CDK v2.
+aws-cdk-lib==2.268.0
+
+# constructs is the base programming model for CDK; the major version is
+# pinned to 10.x to match aws-cdk-lib v2's peer requirement.
+constructs>=10.0.0,<11.0.0
+
+# Prebuilt Lambda layer providing the kubectl/helm binaries for
+# KubernetesVersion.V1_32. Must stay version-aligned with V1_32; bumping the
+# cluster version means switching to the matching kubectl-vNN layer package.
+aws-cdk.lambda-layer-kubectl-v32==2.1.0
