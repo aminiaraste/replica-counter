@@ -1,0 +1,8 @@
+# Runtime dependencies for lambda/handler.py
+#
+# The handler only uses boto3, which is preinstalled in the AWS Lambda
+# Python runtime, so no runtime packages need to be bundled with the
+# function asset. This file is intentionally left without pinned runtime
+# dependencies.
+#
+# See requirements-dev.txt for the test/dev dependencies (pytest, moto, etc.).
