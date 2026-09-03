@@ -72,10 +72,10 @@ This plan implements the design in `design.md`: a CDK stack that provisions a VP
   - [x] 8.2 Install the `ingress-nginx` Helm chart from the vendored chart asset via `s3_assets.Asset(scope, "IngressNginxChartAsset", path="./charts/ingress-nginx")` and `cluster.add_helm_chart(..., chart_asset=chart_asset, values={"controller": {"replicaCount": replica_count}})`, not wired to any other resource, with no `chart`/`repository`/`version` properties set
     - _Requirements: 6.1, 6.3, 6.4, 6.5_
 
-- [ ] 9. Verify end-to-end synthesis and isolation
-  - [ ] 9.1 Run `cdk synth` in `infrastructure/` and confirm it succeeds without needing to run anything in `lambda/` beyond the asset files existing on disk
+- [x] 9. Verify end-to-end synthesis and isolation
+  - [x] 9.1 Run `cdk synth` in `infrastructure/` and confirm it succeeds without needing to run anything in `lambda/` beyond the asset files existing on disk
     - _Requirements: 8.3, 8.4_
-  - [ ] 9.2 Confirm `lambda/`'s pytest suite runs and passes independently of `infrastructure/` (no CDK imports in `lambda/`)
+  - [x] 9.2 Confirm `lambda/`'s pytest suite runs and passes independently of `infrastructure/` (no CDK imports in `lambda/`)
     - _Requirements: 8.3, 8.4_
 
 - [ ] 10. Deploy to AWS and verify end-to-end

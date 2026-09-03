@@ -46,7 +46,7 @@ graph TD
 **Data flow (mirrors and expands the reference diagram):**
 1. CDK context param `env` (default `development`) is written by the stack into the SSM parameter `/platform/account/env` as a stack-owned resource.
 2. The Provider-framework Lambda (`lambda/handler.py`) runs on Custom Resource create/update, calls `ssm:GetParameter` on that exact parameter.
-3. The Lambda returns `{"ReplicaCount": "1"}` or `{"ReplicaCount": "2"}` depending on the environment value; if the parameter is missing, `ParameterNotFound` propagates uncaught and the Provider fails the Custom Resource.
+3. The Lambda returns `{"Data": {"ReplicaCount": "1"}}` or `{"Data": {"ReplicaCount": "2"}}` depending on the environment value; if the parameter is missing, `ParameterNotFound` propagates uncaught and the Provider fails the Custom Resource. The `Data` nesting is required by the Provider framework - attributes returned at the top level of the response are silently dropped and never reach CloudFormation's `Fn::GetAtt`.
 4. The CDK stack reads `custom_resource.get_att("ReplicaCount")`, converts it with `Token.as_number(...)`, and passes it as `values={"controller": {"replicaCount": <N>}}` into the `HelmChart` construct.
 5. The Helm chart source is a local vendored asset: the extracted chart directory `infrastructure/charts/ingress-nginx/` is zipped and uploaded to the CDK bootstrap S3 asset bucket at deploy time via the standard CDK asset mechanism (`aws_cdk.aws_s3_assets.Asset`), rather than fetched live from `kubernetes.github.io` at deploy time. This removes the runtime dependency on the public Helm chart repository being reachable; deploy still requires AWS API/S3 access, which is unavoidable for any CDK deploy.
 6. The `HelmChart` construct installs `ingress-nginx` into the EKS cluster (sourced from that asset) with that replica count, backed by the managed EC2 node group inside the new VPC.
@@ -109,8 +109,19 @@ string_value = scope.node.try_get_context("env") OR "development"
 
 **Interface**:
 ```pascal
-FUNCTION on_event(event: Dict, context: Any) -> Dict[str, str]
+FUNCTION on_event(event: Dict, context: Any) -> Dict[str, Dict[str, str]]
 ```
+
+The return value nests the attribute under a top-level `Data` key
+(`{"Data": {"ReplicaCount": ...}}`), per the CDK Provider framework's
+contract for exposing attributes to CloudFormation's `Fn::GetAtt` - see
+`createResponseEvent`/`submitResponse` in
+`aws-cdk-lib`'s `custom-resources` provider-framework runtime. Returning
+`ReplicaCount` at the top level of the response (i.e. without the `Data`
+wrapper) is accepted by the framework without error but the attribute
+never reaches CloudFormation, which surfaces at deploy time as
+`Vendor response doesn't contain ReplicaCount attribute` when the stack
+calls `custom_resource.get_att("ReplicaCount")`.
 
 **Responsibilities**:
 - Read `/platform/account/env` via `boto3.client("ssm").get_parameter(...)`
@@ -187,9 +198,19 @@ This is the schema that both `lambda/` and `infrastructure/` code against, and i
 
 ```pascal
 STRUCTURE OnEventResponse
-  ReplicaCount: String   -- "1" | "2", ALWAYS a string (CFN GetAtt constraint)
+  Data: STRUCTURE
+    ReplicaCount: String   -- "1" | "2", ALWAYS a string (CFN GetAtt constraint)
+  END STRUCTURE
 END STRUCTURE
 ```
+
+The `Data` wrapper is not optional: the CDK Provider framework only forwards
+attributes nested under this top-level `Data` key to CloudFormation's
+`Fn::GetAtt`. A response shaped as `{"ReplicaCount": "1"}` (without the
+`Data` wrapper) is accepted by the framework without error, but the
+attribute never reaches CloudFormation - `custom_resource.get_att("ReplicaCount")`
+then fails at deploy time with
+`Vendor response doesn't contain ReplicaCount attribute`.
 
 **Mapping rule** (enforced in the Lambda, documented here as the shared contract):
 
@@ -211,16 +232,18 @@ This sidesteps CloudFormation's `Fn::GetAtt` string-only limitation without need
 ### Lambda on_event Handler
 
 ```pascal
-FUNCTION on_event(event, context) -> Dict[String, String]
+FUNCTION on_event(event, context) -> Dict[String, Dict[String, String]]
 INPUT: event (CustomResource lifecycle event dict; RequestType is Create/Update/Delete)
-OUTPUT: Dict with key "ReplicaCount" mapped to "1" or "2"
+OUTPUT: Dict with key "Data", itself a Dict with key "ReplicaCount" mapped to "1" or "2"
+        (the "Data" wrapper is required by the Provider framework; see note above)
 
 PRECONDITIONS:
   - IAM role attached to this Lambda has ssm:GetParameter on
     arn:aws:ssm:<region>:<account>:parameter/platform/account/env (exactly, via grant_read)
 
 POSTCONDITIONS:
-  - On success: return value is {"ReplicaCount": "1"} or {"ReplicaCount": "2"}
+  - On success: return value is {"Data": {"ReplicaCount": "1"}} or
+    {"Data": {"ReplicaCount": "2"}}
   - On ParameterNotFound (or any other ssm client error): exception propagates uncaught;
     Provider framework marks the CustomResource operation FAILED (no silent default)
 
@@ -241,7 +264,7 @@ BEGIN
     RAISE ValueError("Unexpected environment value: " + env_value)
   END IF
 
-  RETURN {"ReplicaCount": replica_count}
+  RETURN {"Data": {"ReplicaCount": replica_count}}
 END
 ```
 
@@ -315,8 +338,8 @@ def on_event(event: dict, context) -> dict:
 - Lambda execution role has `ssm:GetParameter` on `/platform/account/env`
 
 **Postconditions**:
-- Returns `{"ReplicaCount": "1"}` when SSM value is `development`
-- Returns `{"ReplicaCount": "2"}` when SSM value is `staging` or `production`
+- Returns `{"Data": {"ReplicaCount": "1"}}` when SSM value is `development`
+- Returns `{"Data": {"ReplicaCount": "2"}}` when SSM value is `staging` or `production`
 - Raises (does not catch) `ssm.exceptions.ParameterNotFound` when the parameter does not exist
 - No side effects; does not mutate `event`
 
@@ -358,9 +381,9 @@ def on_event(event, context):
     ssm = boto3.client("ssm")
     value = ssm.get_parameter(Name="/platform/account/env")["Parameter"]["Value"]
     if value == "development":
-        return {"ReplicaCount": "1"}
+        return {"Data": {"ReplicaCount": "1"}}
     if value in ("staging", "production"):
-        return {"ReplicaCount": "2"}
+        return {"Data": {"ReplicaCount": "2"}}
     raise ValueError(f"Unexpected environment value: {value}")
 ```
 
@@ -434,9 +457,9 @@ Located in `lambda/tests/`. Uses `moto`'s `mock_aws` to stand up a real (mocked)
 
 | Test | Setup | Call | Expected |
 |---|---|---|---|
-| `test_development_returns_replica_count_1` | `moto` `mock_aws`, `put_parameter(Name="/platform/account/env", Value="development", Type="String")` | `on_event({}, None)` | `{"ReplicaCount": "1"}` |
-| `test_staging_returns_replica_count_2` | put_parameter value `"staging"` | `on_event({}, None)` | `{"ReplicaCount": "2"}` |
-| `test_production_returns_replica_count_2` | put_parameter value `"production"` | `on_event({}, None)` | `{"ReplicaCount": "2"}` |
+| `test_development_returns_replica_count_1` | `moto` `mock_aws`, `put_parameter(Name="/platform/account/env", Value="development", Type="String")` | `on_event({}, None)` | `{"Data": {"ReplicaCount": "1"}}` |
+| `test_staging_returns_replica_count_2` | put_parameter value `"staging"` | `on_event({}, None)` | `{"Data": {"ReplicaCount": "2"}}` |
+| `test_production_returns_replica_count_2` | put_parameter value `"production"` | `on_event({}, None)` | `{"Data": {"ReplicaCount": "2"}}` |
 | `test_missing_parameter_raises` | `mock_aws` active, parameter never created | `on_event({}, None)` | raises `ssm.exceptions.ParameterNotFound` (assert via `pytest.raises`) |
 
 **moto usage pattern**:
@@ -455,7 +478,7 @@ def test_development_returns_replica_count_1():
         Type="String",
     )
     result = on_event({}, None)
-    assert result == {"ReplicaCount": "1"}
+    assert result == {"Data": {"ReplicaCount": "1"}}
 
 @mock_aws
 def test_missing_parameter_raises():

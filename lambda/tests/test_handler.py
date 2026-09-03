@@ -5,12 +5,19 @@ the actual boto3 ``put_parameter`` / ``get_parameter`` call path, rather than
 hand-mocking the boto3 client. Covers every branch of ``on_event`` to reach
 100% line coverage of ``handler.py``:
 
-- development            -> {"ReplicaCount": "1"}
-- staging                -> {"ReplicaCount": "2"}
-- production             -> {"ReplicaCount": "2"}
+- development            -> {"Data": {"ReplicaCount": "1"}}
+- staging                -> {"Data": {"ReplicaCount": "2"}}
+- production             -> {"Data": {"ReplicaCount": "2"}}
 - parameter missing      -> ParameterNotFound propagates
 - unexpected value       -> ValueError raised
-- Delete request type    -> short-circuits to {} without reading SSM
+- Delete request type    -> short-circuits to {"Data": {}} without reading SSM
+
+The ``Data`` nesting matters: the CDK Provider framework only forwards
+attributes nested under a top-level ``Data`` key to CloudFormation's
+``Fn::GetAtt``. A flat ``{"ReplicaCount": "1"}`` response is accepted
+without error by the handler and the framework, but the attribute never
+reaches CloudFormation, so this shape is asserted explicitly below rather
+than just checking the resolved value.
 """
 
 import boto3
@@ -36,19 +43,19 @@ def _put_env(value: str) -> None:
 @mock_aws
 def test_development_returns_replica_count_1():
     _put_env("development")
-    assert on_event({}, None) == {"ReplicaCount": "1"}
+    assert on_event({}, None) == {"Data": {"ReplicaCount": "1"}}
 
 
 @mock_aws
 def test_staging_returns_replica_count_2():
     _put_env("staging")
-    assert on_event({}, None) == {"ReplicaCount": "2"}
+    assert on_event({}, None) == {"Data": {"ReplicaCount": "2"}}
 
 
 @mock_aws
 def test_production_returns_replica_count_2():
     _put_env("production")
-    assert on_event({}, None) == {"ReplicaCount": "2"}
+    assert on_event({}, None) == {"Data": {"ReplicaCount": "2"}}
 
 
 @mock_aws
@@ -69,5 +76,6 @@ def test_unexpected_value_raises_value_error():
 @mock_aws
 def test_delete_request_short_circuits_without_reading_ssm():
     # No parameter is created here: if on_event attempted to read SSM on
-    # Delete, this would raise ParameterNotFound instead of returning {}.
-    assert on_event({"RequestType": "Delete"}, None) == {}
+    # Delete, this would raise ParameterNotFound instead of returning
+    # {"Data": {}}.
+    assert on_event({"RequestType": "Delete"}, None) == {"Data": {}}
