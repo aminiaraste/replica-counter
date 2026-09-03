@@ -17,7 +17,7 @@ graph TD
             NG["Managed Node Group\n1x t3.medium (EC2)"]
         end
 
-        EKS["EKS Cluster\nKubernetesVersion.V1_31\nendpoint: PUBLIC_AND_PRIVATE"]
+        EKS["EKS Cluster\nKubernetesVersion.V1_32\nendpoint: PUBLIC_AND_PRIVATE"]
         SSM["SSM Parameter\n/platform/account/env\nvalue: development | staging | production"]
 
         subgraph CRProvider["custom_resources.Provider"]
@@ -71,12 +71,18 @@ graph TD
 **CDK construct**: `aws_cdk.aws_eks.Cluster` (original `aws_eks` module, **not** `aws_eks_v2`)
 
 **Configuration**:
-- `version=eks.KubernetesVersion.V1_31` (pinned explicitly)
-- `kubectl_layer=KubectlV31Layer(...)` (from `aws_cdk.lambda_layer_kubectl_v31`)
+- `version=eks.KubernetesVersion.V1_32` (pinned explicitly; bumped from `V1_31`
+  because, as of the current deployment window, `1.31` has already left EKS
+  standard support and moved into the higher-cost extended support tier -
+  `1.32` is the version in standard support instead)
+- `kubectl_layer=KubectlV32Layer(...)` (from `aws_cdk.lambda_layer_kubectl_v32`)
 - `endpoint_access=eks.EndpointAccess.PUBLIC_AND_PRIVATE` (CDK default; needed for kubectl from a personal machine, no VPN/bastion)
 - `vpc=<the VPC above>`
 - Managed node group added via `cluster.add_nodegroup_capacity(...)`:
   - `instance_types=[ec2.InstanceType("t3.medium")]`
+  - `ami_type=eks.NodegroupAmiType.AL2023_X86_64_STANDARD` (explicit; CDK's
+    older default AMI type, AL2, stopped receiving EKS-optimized AMI
+    publishes and security patches as of November 26, 2025)
   - `min_size=1, max_size=1, desired_size=1`
 
 **Responsibilities**:
@@ -118,9 +124,27 @@ FUNCTION on_event(event: Dict, context: Any) -> Dict[str, str]
 **Purpose**: Wraps the Lambda in CDK's `custom_resources.Provider` framework so CDK/CloudFormation handles all response signaling; exposes the `ReplicaCount` attribute to the rest of the stack.
 
 **CDK constructs**:
-- `aws_cdk.aws_lambda.Function` — the on-event handler, code from `lambda_.Code.from_asset("../lambda")`
+- `aws_cdk.aws_lambda.Function` — the on-event handler, code from
+  `lambda_.Code.from_asset("../lambda", exclude=[".venv", "tests",
+  "__pycache__", "*.pyc", ".pytest_cache", ".coverage",
+  "requirements-dev.txt"])` (the `exclude` list keeps the deployed asset to
+  runtime files only, so a local dev venv or test caches sitting in
+  `lambda/` at synth time are never bundled), with an explicit
+  `timeout=Duration.seconds(30)` (the CDK default of 3s is tight for a cold
+  start that imports boto3 and makes one SSM call; a failed custom resource
+  invocation here rolls back the whole stack after the EKS cluster has
+  already been created)
 - `aws_cdk.custom_resources.Provider(on_event_handler=<that function>)`
-- `aws_cdk.CustomResource(service_token=provider.service_token)`
+- `aws_cdk.CustomResource(service_token=provider.service_token,
+  properties={"EnvironmentName": env_name})` — the `EnvironmentName`
+  property is not read by the Lambda (which re-reads SSM directly per
+  Requirement 3.1); it exists solely so the custom resource's own declared
+  properties change whenever `env` changes. CloudFormation only re-invokes
+  a custom resource's Lambda on `Update` when its properties differ from
+  the last deployed state, so without this property, redeploying with a
+  different `-c env=...` would update the SSM parameter but never
+  re-trigger the Lambda, leaving `ReplicaCount` (and the Helm release's
+  replica count) stuck at whatever was resolved on the first deploy.
 
 **Responsibilities**:
 - No hand-rolled CFN response PUT logic — Provider handles it
@@ -146,6 +170,13 @@ chart_asset = s3_assets.Asset(scope, "IngressNginxChartAsset", path = "./charts/
 values = { "controller": { "replicaCount": Token.as_number(custom_resource.get_att("ReplicaCount")) } }
 ```
 - `chart_asset` (an `aws_cdk.aws_s3_assets.Asset`) is used instead of `chart` + `repository` + `version` — `HelmChartProps` requires exactly one of `chart` or `chart_asset`, never both. CDK zips the local `infrastructure/charts/ingress-nginx/` directory and uploads it to the CDK bootstrap S3 asset bucket as part of the normal asset publishing step of `cdk deploy`.
+- `release="ingress-nginx"` — an explicit, stable Helm release name instead of
+  the CDK-generated (and truncated) default, so manual verification
+  (`helm list`, `kubectl get pods`) has a predictable name to look for.
+- `wait=True` — blocks `cdk deploy` until the chart's Kubernetes resources
+  report ready, so a stuck rollout (e.g. the controller and default-backend
+  pods failing to schedule onto the single `t3.medium` node) fails the
+  deploy itself rather than only surfacing during later manual verification.
 - Not wired into any other cluster resource, per assignment scope.
 
 ## Data Models
@@ -230,13 +261,14 @@ BEGIN
                   string_value = env_name)
 
   cluster ← eks.Cluster(scope, "Cluster",
-                  version = eks.KubernetesVersion.V1_31,
-                  kubectl_layer = KubectlV31Layer(scope, "KubectlLayer"),
+                  version = eks.KubernetesVersion.V1_32,
+                  kubectl_layer = KubectlV32Layer(scope, "KubectlLayer"),
                   endpoint_access = eks.EndpointAccess.PUBLIC_AND_PRIVATE,
                   vpc = vpc)
 
   cluster.add_nodegroup_capacity("NodeGroup",
                   instance_types = [ec2.InstanceType("t3.medium")],
+                  ami_type = eks.NodegroupAmiType.AL2023_X86_64_STANDARD,
                   min_size = 1, max_size = 1, desired_size = 1)
 
   handler ← lambda_.Function(scope, "ReplicaCountHandler",
@@ -259,7 +291,9 @@ BEGIN
 
   helm ← cluster.add_helm_chart("IngressNginx",
                   chart_asset = chart_asset,
-                  values = { "controller": { "replicaCount": replica_count } })
+                  values = { "controller": { "replicaCount": replica_count } },
+                  release = "ingress-nginx",
+                  wait = True)
 END
 ```
 
@@ -460,7 +494,7 @@ Not applicable at this scale (single Lambda invocation per stack create/update, 
 
 **`infrastructure/`**:
 - `aws-cdk-lib` (includes `aws_cdk.aws_eks`, `aws_cdk.aws_ec2`, `aws_cdk.aws_ssm`, `aws_cdk.aws_lambda`, `aws_cdk.custom_resources`, `aws_cdk.aws_s3_assets`)
-- `aws_cdk.lambda_layer_kubectl_v31` (for `KubectlV31Layer`)
+- `aws_cdk.lambda_layer_kubectl_v32` (for `KubectlV32Layer`)
 - `constructs`
 
 ## Repository Layout
