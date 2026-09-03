@@ -56,20 +56,20 @@ This plan implements the design in `design.md`: a CDK stack that provisions a VP
   - [x] 6.1 Create the `StringParameter` `/platform/account/env`, sourcing its value from `scope.node.try_get_context("env")` defaulting to `"development"`
     - _Requirements: 2.1, 2.2, 2.3, 2.4_
 
-- [ ] 7. Implement Lambda function resource, IAM grant, and Provider/CustomResource wiring
-  - [ ] 7.1 Define the `aws_cdk.aws_lambda.Function` resource with `code=lambda_.Code.from_asset("../lambda")` and handler `handler.on_event`
+- [x] 7. Implement Lambda function resource, IAM grant, and Provider/CustomResource wiring
+  - [x] 7.1 Define the `aws_cdk.aws_lambda.Function` resource with `code=lambda_.Code.from_asset("../lambda")` and handler `handler.on_event`
     - _Requirements: 4.1_
-  - [ ] 7.2 Grant least-privilege read access via `ssm_param.grant_read(handler)`
+  - [x] 7.2 Grant least-privilege read access via `ssm_param.grant_read(handler)`
     - _Requirements: 5.1, 5.2_
-  - [ ] 7.3 Wrap the function in `custom_resources.Provider` and create the `CustomResource` with `service_token=provider.service_token`
+  - [x] 7.3 Wrap the function in `custom_resources.Provider` and create the `CustomResource` with `service_token=provider.service_token`
     - _Requirements: 4.2, 4.3, 4.5_
-  - [ ] 7.4 Add an explicit dependency from the Custom Resource (or its underlying resource) on the SSM parameter
+  - [x] 7.4 Add an explicit dependency from the Custom Resource (or its underlying resource) on the SSM parameter
     - _Requirements: 4.4_
 
-- [ ] 8. Implement Helm chart installation with derived replica count
-  - [ ] 8.1 Compute `replica_count = Token.as_number(custom_resource.get_att("ReplicaCount"))`
+- [x] 8. Implement Helm chart installation with derived replica count
+  - [x] 8.1 Compute `replica_count = Token.as_number(custom_resource.get_att("ReplicaCount"))`
     - _Requirements: 6.2_
-  - [ ] 8.2 Install the `ingress-nginx` Helm chart from the vendored chart asset via `s3_assets.Asset(scope, "IngressNginxChartAsset", path="./charts/ingress-nginx")` and `cluster.add_helm_chart(..., chart_asset=chart_asset, values={"controller": {"replicaCount": replica_count}})`, not wired to any other resource, with no `chart`/`repository`/`version` properties set
+  - [x] 8.2 Install the `ingress-nginx` Helm chart from the vendored chart asset via `s3_assets.Asset(scope, "IngressNginxChartAsset", path="./charts/ingress-nginx")` and `cluster.add_helm_chart(..., chart_asset=chart_asset, values={"controller": {"replicaCount": replica_count}})`, not wired to any other resource, with no `chart`/`repository`/`version` properties set
     - _Requirements: 6.1, 6.3, 6.4, 6.5_
 
 - [ ] 9. Verify end-to-end synthesis and isolation
