@@ -13,6 +13,15 @@ The parameter is read with no ``try``/``except`` wrapper: if it is missing,
 ``ssm.exceptions.ParameterNotFound`` propagates uncaught and the Provider
 framework marks the Custom Resource operation as FAILED. Any unexpected
 value raises ``ValueError`` rather than silently defaulting.
+
+IMPORTANT: the CDK Provider framework only exposes attributes returned
+under a top-level ``Data`` key (see ``createResponseEvent``/``submitResponse``
+in ``aws-cdk-lib``'s provider-framework runtime) to CloudFormation's
+``Fn::GetAtt``. Returning the attribute at the top level of the response
+(e.g. ``{"ReplicaCount": "1"}``) is silently accepted by the framework but
+never reaches CloudFormation, causing
+``Vendor response doesn't contain ReplicaCount attribute`` at deploy time
+when the stack later tries ``custom_resource.get_att("ReplicaCount")``.
 """
 
 from typing import Any, Dict
@@ -22,7 +31,7 @@ import boto3
 PARAMETER_NAME = "/platform/account/env"
 
 
-def on_event(event: Dict[str, Any], context: Any) -> Dict[str, str]:
+def on_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """Resolve the ingress-nginx replica count from the environment SSM parameter.
 
     Args:
@@ -32,9 +41,13 @@ def on_event(event: Dict[str, Any], context: Any) -> Dict[str, str]:
         context: The Lambda context object. Unused.
 
     Returns:
-        A dict with a single key ``ReplicaCount`` mapped to ``"1"`` (development)
-        or ``"2"`` (staging/production). Returns an empty dict on ``Delete``
-        without reading SSM.
+        A dict with a single key ``Data``, itself a dict with a single key
+        ``ReplicaCount`` mapped to ``"1"`` (development) or ``"2"``
+        (staging/production). The Provider framework only forwards
+        attributes nested under ``Data`` to CloudFormation's
+        ``Fn::GetAtt`` - returning ``ReplicaCount`` at the top level would
+        be silently dropped. Returns ``{"Data": {}}`` on ``Delete`` without
+        reading SSM.
 
     Raises:
         botocore.exceptions.ClientError: Propagated uncaught if the SSM
@@ -48,7 +61,7 @@ def on_event(event: Dict[str, Any], context: Any) -> Dict[str, str]:
     # on a full stack teardown, but skipping the read here avoids coupling
     # deletion success to the parameter's existence either way).
     if event.get("RequestType") == "Delete":
-        return {}
+        return {"Data": {}}
 
     ssm = boto3.client("ssm")
 
@@ -63,4 +76,4 @@ def on_event(event: Dict[str, Any], context: Any) -> Dict[str, str]:
     else:
         raise ValueError(f"Unexpected environment value: {env_value}")
 
-    return {"ReplicaCount": replica_count}
+    return {"Data": {"ReplicaCount": replica_count}}

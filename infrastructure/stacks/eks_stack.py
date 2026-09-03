@@ -75,7 +75,7 @@ class EksStack(Stack):
         # Single t3.medium node (min=1/max=1/desired=1) for cost-consciousness.
         # AL2023 AMI: EKS stopped publishing AL2 AMIs (the old CDK default) on
         # November 26, 2025, and AL2 no longer receives security patches.
-        self.cluster.add_nodegroup_capacity(
+        self.node_group = self.cluster.add_nodegroup_capacity(
             "NodeGroup",
             instance_types=[ec2.InstanceType("t3.medium")],
             ami_type=eks.NodegroupAmiType.AL2023_X86_64_STANDARD,
@@ -178,7 +178,7 @@ class EksStack(Stack):
             path="./charts/ingress-nginx",
         )
 
-        self.cluster.add_helm_chart(
+        ingress_nginx_helm_chart = self.cluster.add_helm_chart(
             "IngressNginx",
             chart_asset=ingress_nginx_chart_asset,
             values={"controller": {"replicaCount": replica_count}},
@@ -192,3 +192,13 @@ class EksStack(Stack):
             # itself rather than surfacing only during manual verification.
             wait=True,
         )
+
+        # Explicit dependency on the node group. `add_helm_chart` only
+        # implicitly depends on the cluster's kubectl provider being ready,
+        # not on any particular node group being ACTIVE with nodes joined.
+        # Without this, the Helm install's kubectl/Helm Lambda can run
+        # while the control plane's networking to worker/handler ENIs is
+        # still settling right after cluster + node group creation, which
+        # has been observed to fail with a control-plane connection timeout
+        # ("Kubernetes cluster unreachable: dial tcp ...:443: i/o timeout").
+        ingress_nginx_helm_chart.node.add_dependency(self.node_group)

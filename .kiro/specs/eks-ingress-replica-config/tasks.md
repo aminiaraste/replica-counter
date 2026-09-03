@@ -72,30 +72,30 @@ This plan implements the design in `design.md`: a CDK stack that provisions a VP
   - [x] 8.2 Install the `ingress-nginx` Helm chart from the vendored chart asset via `s3_assets.Asset(scope, "IngressNginxChartAsset", path="./charts/ingress-nginx")` and `cluster.add_helm_chart(..., chart_asset=chart_asset, values={"controller": {"replicaCount": replica_count}})`, not wired to any other resource, with no `chart`/`repository`/`version` properties set
     - _Requirements: 6.1, 6.3, 6.4, 6.5_
 
-- [ ] 9. Verify end-to-end synthesis and isolation
-  - [ ] 9.1 Run `cdk synth` in `infrastructure/` and confirm it succeeds without needing to run anything in `lambda/` beyond the asset files existing on disk
+- [x] 9. Verify end-to-end synthesis and isolation
+  - [x] 9.1 Run `cdk synth` in `infrastructure/` and confirm it succeeds without needing to run anything in `lambda/` beyond the asset files existing on disk
     - _Requirements: 8.3, 8.4_
-  - [ ] 9.2 Confirm `lambda/`'s pytest suite runs and passes independently of `infrastructure/` (no CDK imports in `lambda/`)
+  - [x] 9.2 Confirm `lambda/`'s pytest suite runs and passes independently of `infrastructure/` (no CDK imports in `lambda/`)
     - _Requirements: 8.3, 8.4_
 
-- [ ] 10. Deploy to AWS and verify end-to-end
-  - [ ] 10.1 Bootstrap the CDK environment (`cdk bootstrap`) against account 577638398151, eu-central-1, if not already bootstrapped
+- [x] 10. Deploy to AWS and verify end-to-end
+  - [x] 10.1 Bootstrap the CDK environment (`cdk bootstrap`) against account 577638398151, eu-central-1, if not already bootstrapped
     - Required because the Helm chart asset upload (task 8.2) depends on the CDK bootstrap S3 asset bucket existing.
     - _Requirements: 6.1_
-  - [ ] 10.2 Deploy with default context (`cdk deploy` in `infrastructure/`) and verify the `development` result
+  - [x] 10.2 Deploy with default context (`cdk deploy` in `infrastructure/`) and verify the `development` result
     - Confirm the deploy completes successfully (no rollback/failure).
     - Verify `aws ssm get-parameter --name /platform/account/env` returns value `development`.
     - Verify via `kubectl get deployment -n <namespace>` (or `helm list` / `kubectl get pods`) that the ingress-nginx controller is running with 1 replica.
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 2.1, 2.3, 6.4_
-  - [ ] 10.3 Redeploy with `cdk deploy -c env=staging` and verify the `staging` result
+  - [x] 10.3 Redeploy with `cdk deploy -c env=staging` and verify the `staging` result
     - Confirm `aws ssm get-parameter --name /platform/account/env` now returns value `staging`.
     - Confirm the ingress-nginx controller scales to 2 replicas.
     - _Requirements: 2.2, 6.5_
-  - [ ] 10.4 Confirm clean Lambda execution and CloudFormation status for both deploys
+  - [x] 10.4 Confirm clean Lambda execution and CloudFormation status for both deploys
     - Confirm the Lambda's CloudWatch Logs show no errors during either the `development` or `staging` deploy.
     - Confirm the CustomResource shows `CREATE_COMPLETE` (first deploy) and `UPDATE_COMPLETE` (staging redeploy) in the CloudFormation console/CLI.
     - _Requirements: 4.2, 4.4, 4.5_
-  - [ ] 10.5 Tear down the stack (`cdk destroy`) and confirm clean deletion
+  - [x] 10.5 Tear down the stack (`cdk destroy`) and confirm clean deletion
     - Run `cdk destroy` once verification is complete, to avoid ongoing cost on the personal account.
     - Confirm the stack deletes cleanly, including the EKS cluster, node group, NAT gateway, and VPC.
     - _Requirements: 1.1, 1.2, 1.4_

@@ -46,9 +46,10 @@ This feature delivers a Python CDK project that provisions an EKS cluster, an SS
 #### Acceptance Criteria
 
 1. WHEN the Lambda handler `on_event` is invoked THEN the system SHALL call `boto3` `ssm.get_parameter` for `/platform/account/env`.
-2. WHEN the SSM parameter value is `development` THEN the Lambda SHALL return `{"ReplicaCount": "1"}`.
-3. WHEN the SSM parameter value is `staging` THEN the Lambda SHALL return `{"ReplicaCount": "2"}`.
-4. WHEN the SSM parameter value is `production` THEN the Lambda SHALL return `{"ReplicaCount": "2"}`.
+2. WHEN the SSM parameter value is `development` THEN the Lambda SHALL return `{"Data": {"ReplicaCount": "1"}}`.
+3. WHEN the SSM parameter value is `staging` THEN the Lambda SHALL return `{"Data": {"ReplicaCount": "2"}}`.
+4. WHEN the SSM parameter value is `production` THEN the Lambda SHALL return `{"Data": {"ReplicaCount": "2"}}`.
+4a. The `ReplicaCount` attribute SHALL be nested under a top-level `Data` key in the Lambda's return value, per the CDK Provider framework's contract for exposing attributes to CloudFormation's `Fn::GetAtt`; a flat `{"ReplicaCount": ...}` response is accepted by the framework without error but the attribute never reaches CloudFormation.
 5. IF the SSM parameter does not exist (`ParameterNotFound`) THEN the Lambda SHALL let the exception propagate uncaught, with no caught/default fallback value.
 6. IF the SSM parameter value is none of `development`, `staging`, or `production` THEN the Lambda SHALL raise an exception (`ValueError`) rather than returning a default replica count.
 7. The Lambda handler code SHALL reside in `lambda/handler.py` and SHALL have no dependency on any file in `infrastructure/`.
@@ -96,9 +97,9 @@ This feature delivers a Python CDK project that provisions an EKS cluster, an SS
 1. The system SHALL provide pytest unit tests located in `lambda/tests/`, covering only the Python code in `lambda/`.
 2. The system SHALL NOT provide pytest unit tests for the CDK code in `infrastructure/`.
 3. WHEN tests mock AWS services THEN the system SHALL use `moto`'s `mock_aws` decorator/context manager to mock the real `boto3` SSM `get_parameter`/`put_parameter` call shape, rather than hand-mocking the `boto3` client with a stub.
-4. The test suite SHALL include a test case asserting `on_event` returns `{"ReplicaCount": "1"}` when the SSM parameter value is `development`.
-5. The test suite SHALL include a test case asserting `on_event` returns `{"ReplicaCount": "2"}` when the SSM parameter value is `staging`.
-6. The test suite SHALL include a test case asserting `on_event` returns `{"ReplicaCount": "2"}` when the SSM parameter value is `production`.
+4. The test suite SHALL include a test case asserting `on_event` returns `{"Data": {"ReplicaCount": "1"}}` when the SSM parameter value is `development`.
+5. The test suite SHALL include a test case asserting `on_event` returns `{"Data": {"ReplicaCount": "2"}}` when the SSM parameter value is `staging`.
+6. The test suite SHALL include a test case asserting `on_event` returns `{"Data": {"ReplicaCount": "2"}}` when the SSM parameter value is `production`.
 7. The test suite SHALL include a test case asserting `on_event` raises an exception (propagating `ParameterNotFound`) when the SSM parameter does not exist.
 8. WHEN the test suite is run with coverage measurement (`pytest-cov`) THEN it SHALL achieve 100% line coverage of `lambda/handler.py`.
 
