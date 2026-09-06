@@ -2,7 +2,7 @@
 #
 # aws-cdk-lib bundles all the service constructs this stack uses:
 #   aws_cdk.aws_ec2, aws_cdk.aws_eks, aws_cdk.aws_ssm, aws_cdk.aws_lambda,
-#   aws_cdk.custom_resources, aws_cdk.aws_s3_assets.
+#   aws_cdk.custom_resources.
 # No separate per-service packages are required in CDK v2.
 aws-cdk-lib==2.268.0
 

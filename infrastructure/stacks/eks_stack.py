@@ -7,8 +7,9 @@ This module implements:
 * Task 7 - the Lambda function resource, its least-privilege IAM grant, and
   the ``custom_resources.Provider`` / ``CustomResource`` wiring that exposes
   the derived ``ReplicaCount`` attribute.
-* Task 8 - the ``ingress-nginx`` Helm chart install, from the vendored chart
-  asset, with ``controller.replicaCount`` sourced from the custom resource.
+* Task 8 - the ``ingress-nginx`` Helm chart install, fetched live from the
+  public ingress-nginx repo (v4.15.1), with ``controller.replicaCount``
+  sourced from the custom resource.
 
 See ``.kiro/specs/eks-ingress-replica-config/design.md`` for the full design.
 """
@@ -17,7 +18,6 @@ from aws_cdk import CustomResource, Duration, Stack, Token
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_eks as eks
 from aws_cdk import aws_lambda as lambda_
-from aws_cdk import aws_s3_assets as s3_assets
 from aws_cdk import aws_ssm as ssm
 from aws_cdk import custom_resources as cr
 from aws_cdk.lambda_layer_kubectl_v32 import KubectlV32Layer
@@ -167,20 +167,17 @@ class EksStack(Stack):
         )
 
         # --- Task 8.2: ingress-nginx Helm chart install --------------------
-        # Installed from the vendored chart directory (v4.15.1) rather than a
-        # live repo fetch: CDK zips ``charts/ingress-nginx`` and uploads it to
-        # the bootstrap asset bucket. ``chart_asset`` is mutually exclusive with
-        # ``chart``/``repository``/``version`` (exactly one of ``chart`` or
-        # ``chart_asset`` may be set), so those are intentionally omitted.
-        ingress_nginx_chart_asset = s3_assets.Asset(
-            self,
-            "IngressNginxChartAsset",
-            path="./charts/ingress-nginx",
-        )
-
+        # Fetched live from the public ingress-nginx repo at deploy time,
+        # pinned to v4.15.1, rather than vendored into the repo. CDK's kubectl
+        # provider Lambda pulls the chart from the repo over the VPC's existing
+        # NAT gateway. ``chart``/``repository``/``version`` are mutually
+        # exclusive with ``chart_asset`` (exactly one of ``chart`` or
+        # ``chart_asset`` may be set); the live-fetch form is used here.
         ingress_nginx_helm_chart = self.cluster.add_helm_chart(
             "IngressNginx",
-            chart_asset=ingress_nginx_chart_asset,
+            chart="ingress-nginx",
+            repository="https://kubernetes.github.io/ingress-nginx",
+            version="4.15.1",
             values={"controller": {"replicaCount": replica_count}},
             # Explicit, stable release name instead of the auto-generated
             # (and truncated) default, so `helm list`/`kubectl` verification

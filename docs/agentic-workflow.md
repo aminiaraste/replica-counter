@@ -76,11 +76,12 @@ enforce; the routine case is a cheap, instant script decision.
 A **PostFileSave** hook scoped to `infrastructure/**/*.py` (and
 `*_stack.py`/`cdk.json`) that, whenever CDK code is saved, drives the agent
 to run `cdk synth`, validate the synthesized template against the settled
-design (VPC/EKS/SSM/Provider-Lambda/vendored Helm chart), run `cdk diff`
+design (VPC/EKS/SSM/Provider-Lambda/pinned remote Helm chart), run `cdk diff`
 against any existing deployment, and specifically re-check the security-
-sensitive bits (least-privilege SSM IAM scope, no leaked live-fetch Helm
-chart properties, folder isolation). This turned "did I break the design?"
-into an automatic check on every infrastructure edit.
+sensitive bits (least-privilege SSM IAM scope, the Helm chart's pinned
+`chart`/`repository`/`version` staying intact, folder isolation). This turned
+"did I break the design?" into an automatic check on every infrastructure
+edit.
 
 ---
 
@@ -217,14 +218,7 @@ at deploy time and pass every local synth/test.
    node group networking had settled. Fixed with an explicit Helm-chart ->
    node-group dependency.
 
-4. **Vendoring the Helm chart instead of a live fetch** - rather than
-   granting the cluster internet access to pull `ingress-nginx` from the
-   public Helm repo at deploy time, we vendored the chart locally
-   (`helm pull --untar` into `infrastructure/charts/ingress-nginx/`) and
-   installed it via a `chart_asset`, removing the deploy-time dependency on
-   `kubernetes.github.io` being reachable.
-
-5. **EOL / version drift** - CDK defaulted the node group to the now-
+4. **EOL / version drift** - CDK defaulted the node group to the now-
    unpatched AL2 AMI, and Kubernetes 1.31 had already dropped into extended
    support. Fixed by pinning the AL2023 AMI and bumping to Kubernetes 1.32.
 

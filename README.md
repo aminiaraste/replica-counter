@@ -26,7 +26,6 @@ replica-counter/
     ├── app.py
     ├── cdk.json
     ├── requirements.txt
-    ├── charts/ingress-nginx/ # Vendored Helm chart (helm pull --untar)
     └── stacks/
 ```
 
@@ -39,7 +38,6 @@ Full requirements and design details live in `.kiro/specs/eks-ingress-replica-co
 - Python 3.12+
 - AWS CLI configured with credentials for your target account
 - [AWS CDK CLI](https://docs.aws.amazon.com/cdk/v2/guide/getting_started.html) (`npm install -g aws-cdk`)
-- Helm (only needed if re-vendoring the ingress-nginx chart)
 - An AWS account bootstrapped for CDK (`cdk bootstrap`)
 
 ## Lambda: setup and tests
@@ -77,6 +75,6 @@ cdk deploy -c env=production
 
 ## Notes
 
-- The `ingress-nginx` chart is vendored locally under `infrastructure/charts/ingress-nginx/` (via `helm pull --untar`) so deploys don't depend on network access to the public Helm chart repository.
+- The `ingress-nginx` chart is fetched at deploy time from the public repository `https://kubernetes.github.io/ingress-nginx`, pinned to chart version `4.15.1`. CDK's kubectl/Helm provider Lambda runs in the VPC's private subnets and reaches the repository through the stack's NAT gateway, so a deploy requires that repository to be reachable. Bumping the chart is an explicit edit to the pinned version.
 - The Lambda's IAM permissions are scoped to `ssm:GetParameter` on exactly the `/platform/account/env` parameter, no wildcards.
 - This stack is sized for cost-consciousness (single NAT gateway, single `t3.medium` node) for use in a personal AWS account, not production HA.
