@@ -26,16 +26,15 @@ graph TD
 
         CR["CustomResource\nattribute: ReplicaCount ('1' | '2')"]
 
-        ChartAsset["s3_assets.Asset\ningress-nginx chart (vendored, v4.15.1)\nsource: infrastructure/charts/ingress-nginx/"]
-        AssetBucket["CDK Bootstrap S3 Asset Bucket"]
-        Helm["HelmChart construct\nchart_asset = ChartAsset"]
+        ChartRepo["Public Helm chart repo\nhttps://kubernetes.github.io/ingress-nginx\nchart=ingress-nginx, version=4.15.1"]
+        Helm["HelmChart construct\nchart + repository + version\n(runs in kubectl provider Lambda,\nprivate subnets)"]
 
         SSM -- "ssm:GetParameter\n(grant_read, scoped to this param)" --> OnEvent
         OnEvent -- "returns dict\n{'ReplicaCount': ...}" --> CRProvider
         CRProvider --> CR
         CR -- "Token.as_number(get_att('ReplicaCount'))" --> Helm
-        ChartAsset -- "zipped + uploaded at deploy time\n(standard CDK asset mechanism)" --> AssetBucket
-        AssetBucket -- "chart contents fetched by kubectl provider" --> Helm
+        Helm -- "outbound egress via existing NAT gateway\n(private subnet route)" --> ChartRepo
+        ChartRepo -- "chart pulled live at deploy time\nby kubectl+helm provider" --> Helm
         Helm -- "values={'controller':{'replicaCount': N}}\nHelm install" --> EKS
         NG -- "compute for" --> EKS
     end
@@ -48,8 +47,8 @@ graph TD
 2. The Provider-framework Lambda (`lambda/handler.py`) runs on Custom Resource create/update, calls `ssm:GetParameter` on that exact parameter.
 3. The Lambda returns `{"Data": {"ReplicaCount": "1"}}` or `{"Data": {"ReplicaCount": "2"}}` depending on the environment value; if the parameter is missing, `ParameterNotFound` propagates uncaught and the Provider fails the Custom Resource. The `Data` nesting is required by the Provider framework - attributes returned at the top level of the response are silently dropped and never reach CloudFormation's `Fn::GetAtt`.
 4. The CDK stack reads `custom_resource.get_att("ReplicaCount")`, converts it with `Token.as_number(...)`, and passes it as `values={"controller": {"replicaCount": <N>}}` into the `HelmChart` construct.
-5. The Helm chart source is a local vendored asset: the extracted chart directory `infrastructure/charts/ingress-nginx/` is zipped and uploaded to the CDK bootstrap S3 asset bucket at deploy time via the standard CDK asset mechanism (`aws_cdk.aws_s3_assets.Asset`), rather than fetched live from `kubernetes.github.io` at deploy time. This removes the runtime dependency on the public Helm chart repository being reachable; deploy still requires AWS API/S3 access, which is unavoidable for any CDK deploy.
-6. The `HelmChart` construct installs `ingress-nginx` into the EKS cluster (sourced from that asset) with that replica count, backed by the managed EC2 node group inside the new VPC.
+5. The Helm chart is fetched live from the public chart repository at deploy time: the `HelmChart` construct is configured with `chart="ingress-nginx"`, `repository="https://kubernetes.github.io/ingress-nginx"`, and a pinned `version="4.15.1"`. The pull runs inside CDK's kubectl+helm provider Lambda (the `KubectlHandler`), which CDK places in the cluster VPC's **private** subnets. Outbound egress to `https://kubernetes.github.io` is provided by the VPC's **existing NAT gateway** (`nat_gateways=1`).
+6. The `HelmChart` construct installs `ingress-nginx` into the EKS cluster (pulled live from the public repo at the pinned version) with that replica count, backed by the managed EC2 node group inside the new VPC.
 
 ## Components and Interfaces
 
@@ -163,24 +162,24 @@ calls `custom_resource.get_att("ReplicaCount")`.
 
 ### Component 6: Helm Chart Install
 
-**Purpose**: Installs ingress-nginx with the derived replica count, from a vendored (locally checked-in) chart rather than a live fetch from the public Helm chart repository.
-
-**Vendoring step (one-time, manual, not performed by CDK at deploy time)**:
-```bash
-helm pull ingress-nginx --repo https://kubernetes.github.io/ingress-nginx --version 4.15.1 --untar
-# extracted chart directory is committed to the repo at:
-#   infrastructure/charts/ingress-nginx/
-```
-This is a setup-time action performed once (and again whenever the pinned version is deliberately bumped); it is not part of the CDK deploy flow.
+**Purpose**: Installs ingress-nginx with the derived replica count, fetching the chart live from the public Helm chart repository at deploy time (replacing the previous vendored/checked-in chart approach).
 
 **CDK construct**: `aws_cdk.aws_eks.HelmChart` (or `cluster.add_helm_chart(...)`)
 
 **Configuration**:
 ```pascal
-chart_asset = s3_assets.Asset(scope, "IngressNginxChartAsset", path = "./charts/ingress-nginx")
 values = { "controller": { "replicaCount": Token.as_number(custom_resource.get_att("ReplicaCount")) } }
+helm = cluster.add_helm_chart("IngressNginx",
+           chart = "ingress-nginx",
+           repository = "https://kubernetes.github.io/ingress-nginx",
+           version = "4.15.1",
+           values = values,
+           release = "ingress-nginx",
+           wait = True)
 ```
-- `chart_asset` (an `aws_cdk.aws_s3_assets.Asset`) is used instead of `chart` + `repository` + `version` — `HelmChartProps` requires exactly one of `chart` or `chart_asset`, never both. CDK zips the local `infrastructure/charts/ingress-nginx/` directory and uploads it to the CDK bootstrap S3 asset bucket as part of the normal asset publishing step of `cdk deploy`.
+- `chart` + `repository` + `version` are used to pull the chart live from `https://kubernetes.github.io/ingress-nginx` at deploy time. These three are mutually exclusive with `chart_asset` — `HelmChartProps` requires exactly one of `chart` or `chart_asset`, never both — so the previously used `chart_asset` (an `aws_cdk.aws_s3_assets.Asset`) is removed.
+- `version="4.15.1"` is pinned to exactly the version that was previously vendored, so nothing about the installed chart changes other than where it is sourced from.
+- The pull runs inside CDK's kubectl+helm provider Lambda (`KubectlHandler`), which CDK places in the cluster VPC's **private** subnets. Outbound internet egress to `https://kubernetes.github.io` is provided by the VPC's **existing NAT gateway** (`nat_gateways=1`). The only prerequisite for the live fetch is that the provider Lambda's private-subnet route to the NAT gateway is intact — which it is, by the existing VPC default config.
 - `release="ingress-nginx"` — an explicit, stable Helm release name instead of
   the CDK-generated (and truncated) default, so manual verification
   (`helm list`, `kubectl get pods`) has a predictable name to look for.
@@ -309,11 +308,10 @@ BEGIN
 
   replica_count ← Token.as_number(custom_resource.get_att("ReplicaCount"))
 
-  chart_asset ← s3_assets.Asset(scope, "IngressNginxChartAsset",
-                  path = "./charts/ingress-nginx")   -- relative to infrastructure/stacks/eks_stack.py
-
   helm ← cluster.add_helm_chart("IngressNginx",
-                  chart_asset = chart_asset,
+                  chart = "ingress-nginx",
+                  repository = "https://kubernetes.github.io/ingress-nginx",
+                  version = "4.15.1",
                   values = { "controller": { "replicaCount": replica_count } },
                   release = "ingress-nginx",
                   wait = True)
@@ -322,7 +320,7 @@ END
 
 **Preconditions**: CDK context `env` is either unset (defaults to `development`) or one of `development`/`staging`/`production`.
 
-**Postconditions**: Stack synthesizes a VPC, EKS cluster with one t3.medium node, an always-present SSM parameter, a Provider-backed Custom Resource exposing `ReplicaCount`, and a Helm release (sourced from the vendored chart asset, not a live repo fetch) whose `controller.replicaCount` value is that resolved number.
+**Postconditions**: Stack synthesizes a VPC, EKS cluster with one t3.medium node, an always-present SSM parameter, a Provider-backed Custom Resource exposing `ReplicaCount`, and a Helm release (pulled live from the public chart repo at the pinned `version="4.15.1"`) whose `controller.replicaCount` value is that resolved number.
 
 ## Key Functions with Formal Specifications
 
@@ -415,7 +413,7 @@ If the SSM parameter is deleted out-of-band before a Custom Resource create/upda
 
 ### Property 5: Helm Replica Count Matches Lambda Output
 
-The Helm chart's `controller.replicaCount` numeric value passed to Kubernetes always equals the numeric coercion of the Lambda's `ReplicaCount` string for the environment active at deploy time. This holds regardless of chart source (vendored `chart_asset` vs. a live `chart`/`repository` fetch) — the property concerns the `replicaCount` value, not where the chart itself comes from.
+The Helm chart's `controller.replicaCount` numeric value passed to Kubernetes always equals the numeric coercion of the Lambda's `ReplicaCount` string for the environment active at deploy time. This holds regardless of chart source (a live `chart`/`repository`/`version` fetch as used here, or the previously used vendored `chart_asset`) — the property concerns the `replicaCount` value, not where the chart itself comes from.
 
 **Validates: Requirements 6.2, 6.4, 6.5**
 
@@ -507,7 +505,7 @@ Not applicable at this scale (single Lambda invocation per stack create/update, 
 - Lambda IAM role scoped to `ssm:GetParameter` on exactly one parameter ARN via `grant_read()` — no wildcard SSM access.
 - EKS endpoint access is `PUBLIC_AND_PRIVATE` (not fully private) because this is a personal account without VPN/bastion; this is a deliberate, documented tradeoff, not an oversight. No additional CIDR restriction is configured in this design; tightening `public_access_cidrs` is a possible follow-up but out of scope for this assignment.
 - No secrets are stored in the SSM parameter (plain environment name string); `StringParameter`, not `SecureString`, is appropriate here.
-- Vendoring the ingress-nginx chart into `infrastructure/charts/ingress-nginx/` removes the deploy-time dependency on `kubernetes.github.io` being reachable, but it also means the chart no longer updates itself: bumping the pinned version requires deliberately re-running `helm pull ingress-nginx --repo https://kubernetes.github.io/ingress-nginx --version <new-version> --untar` and committing the resulting chart content. There is no mechanism by which the deployed chart can silently drift to a newer or different version — every change is an explicit, reviewable commit.
+- The ingress-nginx chart is fetched live from the public repository (`https://kubernetes.github.io/ingress-nginx`) at deploy time rather than vendored into the repo. Supply-chain drift is controlled by pinning `version="4.15.1"` explicitly: the deployed chart can never silently move to a newer or different version — bumping it is an explicit, reviewable change to the pinned version string. The tradeoff versus vendoring is that a deploy now requires the public chart repo to be reachable from the kubectl provider Lambda, which runs in the VPC's private subnets and reaches the internet through the **existing NAT gateway** (`nat_gateways=1`).
 
 ## Dependencies
 
@@ -516,7 +514,8 @@ Not applicable at this scale (single Lambda invocation per stack create/update, 
 - Dev/test (`requirements-dev.txt`): `pytest`, `pytest-cov`, `moto`
 
 **`infrastructure/`**:
-- `aws-cdk-lib` (includes `aws_cdk.aws_eks`, `aws_cdk.aws_ec2`, `aws_cdk.aws_ssm`, `aws_cdk.aws_lambda`, `aws_cdk.custom_resources`, `aws_cdk.aws_s3_assets`)
+- `aws-cdk-lib` (includes `aws_cdk.aws_eks`, `aws_cdk.aws_ec2`, `aws_cdk.aws_ssm`, `aws_cdk.aws_lambda`, `aws_cdk.custom_resources`)
+- The ingress-nginx Helm chart (`ingress-nginx`, version `4.15.1`) is pulled live from `https://kubernetes.github.io/ingress-nginx` at deploy time by the kubectl provider Lambda; it is no longer vendored in the repo. This adds a deploy-time requirement that the public chart repo be reachable via the VPC's existing NAT gateway.
 - `aws_cdk.lambda_layer_kubectl_v32` (for `KubectlV32Layer`)
 - `constructs`
 
@@ -537,8 +536,6 @@ replica-counter/
     ├── app.py
     ├── cdk.json
     ├── requirements.txt
-    ├── charts/
-    │   └── ingress-nginx/        -- vendored chart (helm pull --untar, v4.15.1, committed)
     └── stacks/
         └── eks_stack.py
 ```

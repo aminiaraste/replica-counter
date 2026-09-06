@@ -13,7 +13,7 @@ This feature delivers a Python CDK project that provisions an EKS cluster, an SS
 - **Provider framework**: The `aws_cdk.custom_resources.Provider` construct that wraps a Lambda as an `on_event_handler` and manages CloudFormation custom resource response (PUT) signaling automatically, removing the need for hand-rolled response logic.
 - **StringParameter**: An AWS Systems Manager (SSM) Parameter Store resource type that stores a plain-text (non-secret) string value, used here for `/platform/account/env`.
 - **Managed node group**: An Amazon EKS-managed group of EC2 worker nodes attached to the cluster, here fixed at a single `t3.medium` instance (min=1, max=1, desired=1).
-- **Vendored chart / `chart_asset`**: A Helm chart whose contents are downloaded once (via `helm pull --untar`) and committed as plain files into the repository at `infrastructure/charts/ingress-nginx/`, rather than fetched live from a remote Helm repository at deploy time. It is installed via the `chart_asset` property (an `aws_cdk.aws_s3_assets.Asset` pointing at that local directory), which CDK zips and uploads to the CDK bootstrap S3 asset bucket as part of normal asset publishing, so no network call to the public chart repository is required during `cdk deploy`.
+- **Live remote chart fetch**: A Helm chart pulled from a remote Helm repository at deploy time, rather than committed into this repository. It is installed via the `chart` + `repository` + `version` properties (mutually exclusive with `chart_asset`), so `cdk deploy` requires the public chart repository to be reachable. The chart is not stored in this repository; version drift is prevented by pinning `version` explicitly.
 
 ## Requirements
 
@@ -24,7 +24,7 @@ This feature delivers a Python CDK project that provisions an EKS cluster, an SS
 #### Acceptance Criteria
 
 1. WHEN the CDK stack is synthesized THEN the system SHALL create a new VPC with `nat_gateways=1`.
-2. WHEN the CDK stack is synthesized THEN the system SHALL create an EKS cluster using the `aws_cdk.aws_eks` module (not `aws_eks_v2`) with `version=eks.KubernetesVersion.V1_31` and a `KubectlV31Layer` kubectl layer.
+2. WHEN the CDK stack is synthesized THEN the system SHALL create an EKS cluster using the `aws_cdk.aws_eks` module (not `aws_eks_v2`) with `version=eks.KubernetesVersion.V1_32` and a `KubectlV32Layer` kubectl layer.
 3. WHEN the CDK stack is synthesized THEN the system SHALL configure the EKS cluster with `endpoint_access=eks.EndpointAccess.PUBLIC_AND_PRIVATE`.
 4. WHEN the CDK stack is synthesized THEN the system SHALL add a managed EC2 node group to the cluster with instance type `t3.medium` and a fixed size of 1 (min=1, max=1, desired=1).
 
@@ -77,16 +77,17 @@ This feature delivers a Python CDK project that provisions an EKS cluster, an SS
 
 ### Requirement 6: Helm Chart Installation with Derived Replica Count
 
-**User Story:** As a platform engineer, I want the ingress-nginx Helm chart installed into the EKS cluster from a locally vendored chart with a replica count derived from the environment, so that staging/production get more replicas than development without depending on a public chart repository being reachable at deploy time.
+**User Story:** As a platform engineer, I want the ingress-nginx Helm chart fetched from its official public repository at deploy time and installed into the EKS cluster with a replica count derived from the environment, so that staging/production get more replicas than development without the chart's contents being committed into this repository.
 
 #### Acceptance Criteria
 
-1. WHEN the CDK stack is synthesized THEN the system SHALL install the `ingress-nginx` Helm chart, chart version `4.15.1`, using a vendored `chart_asset` (an `aws_cdk.aws_s3_assets.Asset`) sourced from the repo-committed directory `infrastructure/charts/ingress-nginx/` (obtained via `helm pull ingress-nginx --repo https://kubernetes.github.io/ingress-nginx --version 4.15.1 --untar`), into the EKS cluster.
+1. WHEN the CDK stack is synthesized THEN the system SHALL install the `ingress-nginx` Helm chart into the EKS cluster using a live remote fetch, with `chart="ingress-nginx"`, `repository="https://kubernetes.github.io/ingress-nginx"`, and `version="4.15.1"`, and SHALL NOT use a `chart_asset` or any chart contents committed into this repository.
 2. WHEN the Helm chart is configured THEN the system SHALL derive `controller.replicaCount` from `Token.as_number(custom_resource.get_att("ReplicaCount"))`, where `custom_resource` is the Custom Resource from Requirement 4.
 3. The Helm chart installation SHALL NOT be wired into any other cluster resource beyond the cluster itself, per assignment scope.
 4. WHEN the resolved environment is `development` THEN the deployed Helm release's `controller.replicaCount` SHALL be `1`.
 5. WHEN the resolved environment is `staging` or `production` THEN the deployed Helm release's `controller.replicaCount` SHALL be `2`.
-6. THE system SHALL NOT depend on network access to a public Helm chart repository (e.g. `https://kubernetes.github.io/ingress-nginx`) at deploy time, since the chart source is the local, repo-committed `chart_asset` directory.
+6. WHEN the Helm chart is installed THEN the system SHALL reach `https://kubernetes.github.io/ingress-nginx` from CDK's kubectl/Helm provider Lambda, which runs in the VPC's private subnets and egresses through the stack's NAT gateway; a deploy therefore depends on that repository being reachable.
+7. THE system SHALL pin the chart version explicitly so the installed chart cannot silently change; bumping it SHALL require an explicit edit to the pinned `version`.
 
 ### Requirement 7: Lambda Unit Test Coverage
 
